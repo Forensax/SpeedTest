@@ -69,6 +69,8 @@ class GuiTests(unittest.TestCase):
         self.app = SpeedTestApp(self.root, config_path=self.path)
 
     def test_pages_proxy_and_timer_controls(self):
+        self.assertTrue(self.root.geometry().startswith(f"{round(1000 * self.app.scale)}x{round(680 * self.app.scale)}"))
+        self.assertEqual(self.root.wm_minsize(), (round(900 * self.app.scale), round(620 * self.app.scale)))
         self.assertEqual([self.app.notebook.tab(tab, "text") for tab in self.app.notebook.tabs()], ["测速", "设置"])
         self.assertEqual(int(self.root.tk.call("ttk::style", "lookup", "TNotebook.Tab", "-width")), NOTEBOOK_TAB_WIDTH)
         self.assertEqual(
@@ -136,8 +138,17 @@ class GuiTests(unittest.TestCase):
         self.app.sort_thread_details("speed")
         self.assertEqual([row[0] for row in self.app._last_thread_rows], ["线程 2", "线程 3", "线程 1"])
         self.assertEqual(self.app.thread_details_header_labels["speed"].cget("text"), "速度 ▲")
+
+        updated_details = (
+            ThreadSnapshot(1, "https://z.example/file", ThreadState.STOPPED, 9, 60_000_000 / 8),
+            ThreadSnapshot(2, "https://a.example/file", ThreadState.IDLE, 100, 30_000_000 / 8),
+            ThreadSnapshot(3, "https://m.example/file", ThreadState.DOWNLOADING, 50, 10_000_000 / 8),
+        )
+        self.app._update_thread_details(updated_details)
+        self.assertEqual([row[0] for row in self.app._last_thread_rows], ["线程 2", "线程 3", "线程 1"])
+
         self.app.sort_thread_details("speed")
-        self.assertEqual([row[0] for row in self.app._last_thread_rows], ["线程 1", "线程 3", "线程 2"])
+        self.assertEqual([row[0] for row in self.app._last_thread_rows], ["线程 1", "线程 2", "线程 3"])
         self.assertEqual(self.app.thread_details_header_labels["speed"].cget("text"), "速度 ▼")
 
         self.app.sort_thread_details("total")

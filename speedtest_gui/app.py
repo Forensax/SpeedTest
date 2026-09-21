@@ -103,6 +103,7 @@ class SpeedTestApp:
         self._thread_address_labels: list[ttk.Label] = []
         self._thread_sort_column: str | None = None
         self._thread_sort_reverse = False
+        self._thread_display_order: tuple[int, ...] | None = None
         self._suppress_url_tracking = False
         self._urls_modified = False
         self.thread_details_expanded = False
@@ -113,8 +114,8 @@ class SpeedTestApp:
         self.scale = max(1.0, root.winfo_fpixels("1i") / 96)
 
         root.title("SpeedTest")
-        root.geometry(f"{round(760 * self.scale)}x{round(550 * self.scale)}")
-        root.minsize(round(700 * self.scale), round(510 * self.scale))
+        root.geometry(f"{round(1000 * self.scale)}x{round(680 * self.scale)}")
+        root.minsize(round(900 * self.scale), round(620 * self.scale))
         root.configure(background="white")
         root.protocol("WM_DELETE_WINDOW", self.close)
         if sys.platform == "win32" and asset_path("speedtest.ico").exists():
@@ -468,9 +469,36 @@ class SpeedTestApp:
         else:
             self._thread_sort_column = column
             self._thread_sort_reverse = False
+        ordered_details = tuple(
+            sorted(
+                self._current_thread_details,
+                key=self._thread_detail_sort_key,
+                reverse=self._thread_sort_reverse,
+            )
+        )
+        self._thread_display_order = tuple(detail.index for detail in ordered_details)
         self._update_thread_header_labels()
         self._last_thread_rows = None
         self._update_thread_details(self._current_thread_details)
+
+    def _ordered_thread_details(self, details: tuple[ThreadSnapshot, ...]) -> tuple[ThreadSnapshot, ...]:
+        if self._thread_display_order is None:
+            return tuple(sorted(details, key=lambda detail: detail.index))
+
+        details_by_index = {detail.index: detail for detail in details}
+        ordered = [
+            details_by_index[index]
+            for index in self._thread_display_order
+            if index in details_by_index
+        ]
+        displayed_indexes = {detail.index for detail in ordered}
+        ordered.extend(
+            sorted(
+                (detail for detail in details if detail.index not in displayed_indexes),
+                key=lambda detail: detail.index,
+            )
+        )
+        return tuple(ordered)
 
     def _preview_thread_details(self) -> tuple[ThreadSnapshot, ...]:
         return tuple(
@@ -486,7 +514,7 @@ class SpeedTestApp:
 
     def _update_thread_details(self, details: tuple[ThreadSnapshot, ...]) -> None:
         self._current_thread_details = tuple(details)
-        ordered_details = tuple(sorted(details, key=self._thread_detail_sort_key, reverse=self._thread_sort_reverse))
+        ordered_details = self._ordered_thread_details(self._current_thread_details)
         rows = tuple(
             (
                 f"线程 {detail.index}",
