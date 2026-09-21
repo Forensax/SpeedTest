@@ -1,4 +1,5 @@
 import gc
+import json
 import tempfile
 import time
 import tkinter as tk
@@ -7,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from speedtest_gui.app import SpeedTestApp, format_bytes, format_duration
-from speedtest_gui.config import SpeedTestConfig
+from speedtest_gui.config import BUILTIN_COLLECTIONS, SpeedTestConfig
 from tests.servers import HTTPFixture
 
 
@@ -59,6 +60,7 @@ class GuiTests(unittest.TestCase):
 
     def test_pages_proxy_and_timer_controls(self):
         self.assertEqual([self.app.notebook.tab(tab, "text") for tab in self.app.notebook.tabs()], ["测速", "设置"])
+        self.assertEqual(self.app.collection_var.get(), "Apple CDN")
         self.assertTrue(self.app.proxy_host_entry.instate(["disabled"]))
         self.assertTrue(self.app.duration_entry.instate(["disabled"]))
         self.app.proxy_mode_var.set("SOCKS5")
@@ -66,6 +68,32 @@ class GuiTests(unittest.TestCase):
         self.app._update_controls()
         self.assertTrue(self.app.proxy_host_entry.instate(["!disabled"]))
         self.assertTrue(self.app.duration_entry.instate(["!disabled"]))
+
+    def test_collection_selection_and_restore(self):
+        self.app.collection_var.set("Hugging Face Models")
+        self.app.select_collection()
+        self.assertEqual(
+            self.app.urls_text.get("1.0", "end").strip().splitlines(),
+            list(BUILTIN_COLLECTIONS[1].urls),
+        )
+        self.app.urls_text.delete("1.0", "end")
+        self.app.urls_text.insert("1.0", "https://example.com/custom.bin")
+        self.app.restore_collection_button.invoke()
+        self.assertEqual(
+            self.app.urls_text.get("1.0", "end").strip().splitlines(),
+            list(BUILTIN_COLLECTIONS[1].urls),
+        )
+        self.app.collection_var.set("自定义")
+        self.app.select_collection()
+        self.assertTrue(self.app.restore_collection_button.instate(["disabled"]))
+
+    def test_collection_is_saved_with_current_urls(self):
+        self.app.collection_var.set("GitHub Releases")
+        self.app.select_collection()
+        self.assertTrue(self.app.save_settings())
+        saved = SpeedTestConfig.from_dict(json.loads(self.path.read_text(encoding="utf-8")))
+        self.assertEqual(saved.collection_id, "github")
+        self.assertEqual(saved.urls, BUILTIN_COLLECTIONS[2].urls)
 
     def test_invalid_settings_select_settings_page(self):
         self.app.connections_var.set("bad")

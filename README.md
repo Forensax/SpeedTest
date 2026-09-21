@@ -20,10 +20,11 @@ Get-FileHash .\SpeedTest.exe -Algorithm SHA256
 
 - 实时速度、平均速度、峰值、累计流量、运行时间和最近 60 秒曲线。
 - 默认 8 路并发、手动停止，可调整连接数、下载地址和定时停止。
+- 内置 Apple CDN、Hugging Face Models、GitHub Releases 三种测速集合，可直接切换或恢复集合默认地址。
 - 支持 HTTP、HTTPS、SOCKS5 代理及账号认证，SOCKS5 通过代理解析 DNS。
 - 测速与设置分为两个页面，运行期间锁定设置。
 
-默认使用原脚本中的 8 个 Apple 固件下载地址。数据读取后直接丢弃，不保存下载文件。测速会持续产生网络流量，结果反映所选下载源与连接路径的吞吐量。
+默认使用原脚本中的 8 个 Apple 固件下载地址。Hugging Face 集合包含 Qwen3-8B 和 Qwen3-Embedding-8B 的大型模型分片，GitHub Releases 集合包含 FFmpeg 与 OBS Studio 的 Windows x64 发布包。数据读取后直接丢弃，不保存下载文件。测速会持续产生网络流量，结果反映所选下载源与连接路径的吞吐量。
 
 速度按十进制显示：`1 MB/s = 8 Mbps`；累计流量中的 MB、GB 同样按十进制换算。
 
@@ -37,6 +38,7 @@ Get-FileHash .\SpeedTest.exe -Algorithm SHA256
 | 定时停止 | 关闭；启用后可设 1–86400 秒 |
 | 代理类型 | 直连；所有连接均按界面设置执行 |
 | 手动代理 | 地址 `127.0.0.1`，端口 `10808` |
+| 测速集合 | Apple CDN、Hugging Face Models、GitHub Releases、自定义 |
 | 下载地址 | 每行一个 HTTP 或 HTTPS 直链 |
 | 配置文件 | `%LOCALAPPDATA%\SpeedTest\config.json` |
 | 代理密码 | 仅当前会话使用，关闭后需要重新填写 |

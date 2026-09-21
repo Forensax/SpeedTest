@@ -12,7 +12,17 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from . import __version__
-from .config import DEFAULT_URLS, ConfigError, ProxyConfig, SpeedTestConfig, load_config, save_config
+from .config import (
+    COLLECTIONS,
+    COLLECTIONS_BY_LABEL,
+    CUSTOM_COLLECTION_ID,
+    ConfigError,
+    ProxyConfig,
+    SpeedTestConfig,
+    get_collection,
+    load_config,
+    save_config,
+)
 from .engine import SpeedSnapshot, SpeedTestEngine, TestState
 
 
@@ -110,6 +120,7 @@ class SpeedTestApp:
         self.route_var = tk.StringVar()
         self.detail_var = tk.StringVar(value=self._warning)
         self.duration_label_var = tk.StringVar(value="持续测速")
+        self.collection_var = tk.StringVar()
         self.connections_var = tk.StringVar()
         self.timed_var = tk.BooleanVar()
         self.duration_var = tk.StringVar(value="60")
@@ -181,9 +192,30 @@ class SpeedTestApp:
     def _build_settings_page(self) -> None:
         page = self.settings_page
         page.columnconfigure(0, weight=1)
-        page.rowconfigure(4, weight=1)
+        page.rowconfigure(5, weight=1)
+        collection = ttk.Frame(page)
+        collection.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        collection.columnconfigure(1, weight=1)
+        ttk.Label(collection, text="测速集合").grid(row=0, column=0, padx=(0, 10))
+        self.collection_entry = ttk.Combobox(
+            collection,
+            values=tuple(item.label for item in COLLECTIONS),
+            textvariable=self.collection_var,
+            state="readonly",
+            width=22,
+        )
+        self.collection_entry.grid(row=0, column=1, sticky="w")
+        self.collection_entry.bind("<<ComboboxSelected>>", lambda _event: self.select_collection())
+        self.restore_collection_button = ttk.Button(
+            collection,
+            text="恢复集合默认",
+            style="App.TButton",
+            command=self.restore_collection,
+        )
+        self.restore_collection_button.grid(row=0, column=2, padx=(12, 0))
+
         timing = ttk.Frame(page)
-        timing.grid(row=0, column=0, sticky="ew", pady=(0, 15))
+        timing.grid(row=1, column=0, sticky="ew", pady=(0, 15))
         ttk.Label(timing, text="并发连接").grid(row=0, column=0, padx=(0, 10))
         self.connections_entry = ttk.Spinbox(timing, from_=1, to=64, textvariable=self.connections_var, width=5)
         self.connections_entry.grid(row=0, column=1)
@@ -194,7 +226,7 @@ class SpeedTestApp:
         ttk.Label(timing, text="秒", style="Muted.TLabel").grid(row=0, column=4, padx=(7, 0))
 
         proxy = ttk.Frame(page)
-        proxy.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        proxy.grid(row=2, column=0, sticky="ew", pady=(0, 12))
         proxy.columnconfigure(3, weight=1)
         ttk.Label(proxy, text="代理类型").grid(row=0, column=0, sticky="w", padx=(0, 10))
         self.proxy_mode_entry = ttk.Combobox(proxy, values=tuple(PROXY_MODES), textvariable=self.proxy_mode_var, state="readonly", width=9)
@@ -208,7 +240,7 @@ class SpeedTestApp:
         self.proxy_port_entry.grid(row=0, column=5, sticky="e")
 
         auth = ttk.Frame(page)
-        auth.grid(row=2, column=0, sticky="ew", pady=(0, 16))
+        auth.grid(row=3, column=0, sticky="ew", pady=(0, 16))
         auth.columnconfigure(1, weight=1)
         auth.columnconfigure(3, weight=1)
         ttk.Label(auth, text="用户名").grid(row=0, column=0, padx=(0, 10))
@@ -219,13 +251,11 @@ class SpeedTestApp:
         self.proxy_password_entry.grid(row=0, column=3, sticky="ew")
 
         urls_header = ttk.Frame(page)
-        urls_header.grid(row=3, column=0, sticky="ew", pady=(0, 8))
+        urls_header.grid(row=4, column=0, sticky="ew", pady=(0, 8))
         urls_header.columnconfigure(0, weight=1)
         ttk.Label(urls_header, text="下载地址", anchor="w").grid(row=0, column=0, sticky="w")
-        self.restore_urls_button = ttk.Button(urls_header, text="默认地址", style="App.TButton", command=self.restore_urls)
-        self.restore_urls_button.grid(row=0, column=1)
         urls_frame = ttk.Frame(page)
-        urls_frame.grid(row=4, column=0, sticky="nsew")
+        urls_frame.grid(row=5, column=0, sticky="nsew")
         urls_frame.columnconfigure(0, weight=1)
         urls_frame.rowconfigure(0, weight=1)
         self.urls_text = tk.Text(urls_frame, height=7, width=1, wrap="none", font=("Consolas", 10), relief="flat", borderwidth=0, highlightthickness=1, highlightbackground="#cfd7e2", highlightcolor=BLUE, padx=8, pady=7, undo=True)
@@ -237,13 +267,14 @@ class SpeedTestApp:
         self.urls_text.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
 
         footer = ttk.Frame(page)
-        footer.grid(row=5, column=0, sticky="ew", pady=(14, 0))
+        footer.grid(row=6, column=0, sticky="ew", pady=(14, 0))
         footer.columnconfigure(0, weight=1)
         ttk.Label(footer, textvariable=self.settings_message_var, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
         self.save_button = ttk.Button(footer, text="保存设置", width=10, style="Primary.TButton", command=self.save_settings)
         self.save_button.grid(row=0, column=1, sticky="e")
 
     def _fill_settings(self) -> None:
+        self.collection_var.set(get_collection(self.config.collection_id).label)
         self.connections_var.set(str(self.config.connections))
         self.timed_var.set(self.config.duration_seconds > 0)
         self.duration_var.set(str(self.config.duration_seconds or 60))
@@ -256,6 +287,38 @@ class SpeedTestApp:
         self.route_var.set(self.config.proxy.label)
         self._update_controls()
 
+    def _selected_collection(self):
+        try:
+            return COLLECTIONS_BY_LABEL[self.collection_var.get()]
+        except KeyError as exc:
+            raise ConfigError("请选择有效的测速集合。") from exc
+
+    def select_collection(self) -> None:
+        if self.engine.snapshot().busy:
+            return
+        collection = self._selected_collection()
+        if collection.id == CUSTOM_COLLECTION_ID:
+            self.settings_message_var.set("当前为自定义地址")
+            self._update_controls()
+            return
+        self.urls_text.configure(state="normal")
+        self.urls_text.delete("1.0", "end")
+        self.urls_text.insert("1.0", "\n".join(collection.urls))
+        self.settings_message_var.set(f"已载入 {collection.label} 默认地址")
+        self._update_controls()
+
+    def restore_collection(self) -> None:
+        if self.engine.snapshot().busy:
+            return
+        collection = self._selected_collection()
+        if collection.id == CUSTOM_COLLECTION_ID:
+            return
+        self.urls_text.configure(state="normal")
+        self.urls_text.delete("1.0", "end")
+        self.urls_text.insert("1.0", "\n".join(collection.urls))
+        self.settings_message_var.set("集合默认地址已恢复")
+        self._update_controls()
+
     def _read_settings(self) -> SpeedTestConfig:
         try:
             connections = int(self.connections_var.get())
@@ -265,6 +328,7 @@ class SpeedTestApp:
             raise ConfigError("并发数、时长和端口请填写整数。") from exc
         if self.timed_var.get() and duration <= 0:
             raise ConfigError("定时停止的时长至少为 1 秒。")
+        collection = self._selected_collection()
         config = SpeedTestConfig(
             urls=tuple(line.strip() for line in self.urls_text.get("1.0", "end").splitlines() if line.strip()),
             connections=connections,
@@ -276,6 +340,7 @@ class SpeedTestApp:
                 username=self.proxy_username_var.get(),
                 password=self.proxy_password_var.get(),
             ),
+            collection_id=collection.id,
         )
         config.validate()
         return config
@@ -298,13 +363,6 @@ class SpeedTestApp:
         self.settings_message_var.set("已保存 · 密码仅在当前会话使用")
         self._warning = ""
         return True
-
-    def restore_urls(self) -> None:
-        if self.engine.snapshot().busy:
-            return
-        self.urls_text.delete("1.0", "end")
-        self.urls_text.insert("1.0", "\n".join(DEFAULT_URLS))
-        self.settings_message_var.set("默认地址已填入")
 
     def start(self) -> None:
         if not self.save_settings():
@@ -329,10 +387,12 @@ class SpeedTestApp:
     def _update_controls(self) -> None:
         snapshot = self.engine.snapshot()
         busy = snapshot.busy or self._closing
-        for widget in (self.connections_entry, self.timed_check, self.restore_urls_button, self.save_button):
+        for widget in (self.collection_entry, self.restore_collection_button, self.connections_entry, self.timed_check, self.save_button):
             widget.state(["disabled" if busy else "!disabled"])
         self.proxy_mode_entry.configure(state="disabled" if busy else "readonly")
         self.urls_text.configure(state="disabled" if busy else "normal")
+        if not busy:
+            self.restore_collection_button.state(["disabled" if self.collection_var.get() == "自定义" else "!disabled"])
         self.duration_entry.state(["!disabled" if self.timed_var.get() and not busy else "disabled"])
         proxy_enabled = self.proxy_mode_var.get() != "直连" and not busy
         for widget in (self.proxy_host_entry, self.proxy_port_entry, self.proxy_username_entry, self.proxy_password_entry):
