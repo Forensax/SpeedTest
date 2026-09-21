@@ -24,7 +24,7 @@ Get-FileHash .\SpeedTest.exe -Algorithm SHA256
 - 支持 HTTP、HTTPS、SOCKS5 代理及账号认证，SOCKS5 通过代理解析 DNS。
 - 测速与设置分为两个页面，运行期间锁定设置。
 
-默认使用原脚本中的 8 个 Apple 固件下载地址。Hugging Face 集合包含 Qwen3-8B 和 Qwen3-Embedding-8B 的大型模型分片，GitHub Releases 集合包含 FFmpeg 与 OBS Studio 的 Windows x64 发布包。数据读取后直接丢弃，不保存下载文件。测速会持续产生网络流量，结果反映所选下载源与连接路径的吞吐量。
+默认使用原脚本中的 8 个 Apple 固件下载地址。Hugging Face 集合包含 Qwen3-8B 和 Qwen3-Embedding-8B 的大型模型分片，GitHub Releases 集合包含 8 个固定版本、单文件超过 1 GiB 的 ComfyUI、Godot 和 LLVM 发布资产。数据读取后直接丢弃，不保存下载文件。测速会持续产生网络流量，结果反映所选下载源与连接路径的吞吐量。
 
 速度按十进制显示：`1 MB/s = 8 Mbps`；累计流量中的 MB、GB 同样按十进制换算。
 

@@ -24,6 +24,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(DEFAULT_COLLECTION_ID, "apple")
         self.assertEqual(SpeedTestConfig().collection_id, DEFAULT_COLLECTION_ID)
         self.assertEqual([collection.id for collection in COLLECTIONS], ["apple", "huggingface", "github", "custom"])
+        self.assertEqual(len(BUILTIN_COLLECTIONS[2].urls), 8)
         for collection in BUILTIN_COLLECTIONS:
             with self.subTest(collection=collection.id):
                 self.assertTrue(collection.urls)
