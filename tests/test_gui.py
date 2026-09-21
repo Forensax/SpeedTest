@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from speedtest_gui.app import SpeedTestApp, format_bytes, format_duration
+from speedtest_gui.app import NOTEBOOK_TAB_WIDTH, SpeedTestApp, format_bytes, format_duration
 from speedtest_gui.config import BUILTIN_COLLECTIONS, SpeedTestConfig
 from tests.servers import HTTPFixture
 
@@ -60,6 +60,7 @@ class GuiTests(unittest.TestCase):
 
     def test_pages_proxy_and_timer_controls(self):
         self.assertEqual([self.app.notebook.tab(tab, "text") for tab in self.app.notebook.tabs()], ["测速", "设置"])
+        self.assertEqual(int(self.root.tk.call("ttk::style", "lookup", "TNotebook.Tab", "-width")), NOTEBOOK_TAB_WIDTH)
         self.assertEqual(self.app.collection_var.get(), "Apple CDN")
         self.assertTrue(self.app.proxy_host_entry.instate(["disabled"]))
         self.assertTrue(self.app.duration_entry.instate(["disabled"]))
@@ -83,7 +84,7 @@ class GuiTests(unittest.TestCase):
             self.app.urls_text.get("1.0", "end").strip().splitlines(),
             list(BUILTIN_COLLECTIONS[1].urls),
         )
-        self.app.collection_var.set("自定义")
+        self.app.collection_var.set("Custom")
         self.app.select_collection()
         self.assertTrue(self.app.restore_collection_button.instate(["disabled"]))
 

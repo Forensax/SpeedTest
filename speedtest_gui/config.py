@@ -57,7 +57,7 @@ BUILTIN_COLLECTIONS = (
     DownloadCollection("huggingface", "Hugging Face Models", HUGGINGFACE_URLS),
     DownloadCollection("github", "GitHub Releases", GITHUB_URLS),
 )
-CUSTOM_COLLECTION = DownloadCollection(CUSTOM_COLLECTION_ID, "自定义", ())
+CUSTOM_COLLECTION = DownloadCollection(CUSTOM_COLLECTION_ID, "Custom", ())
 COLLECTIONS = BUILTIN_COLLECTIONS + (CUSTOM_COLLECTION,)
 COLLECTIONS_BY_ID = {collection.id: collection for collection in COLLECTIONS}
 COLLECTIONS_BY_LABEL = {collection.label: collection for collection in COLLECTIONS}

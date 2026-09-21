@@ -38,7 +38,7 @@ Get-FileHash .\SpeedTest.exe -Algorithm SHA256
 | 定时停止 | 关闭；启用后可设 1–86400 秒 |
 | 代理类型 | 直连；所有连接均按界面设置执行 |
 | 手动代理 | 地址 `127.0.0.1`，端口 `10808` |
-| 测速集合 | Apple CDN、Hugging Face Models、GitHub Releases、自定义 |
+| 测速集合 | Apple CDN、Hugging Face Models、GitHub Releases、Custom |
 | 下载地址 | 每行一个 HTTP 或 HTTPS 直链 |
 | 配置文件 | `%LOCALAPPDATA%\SpeedTest\config.json` |
 | 代理密码 | 仅当前会话使用，关闭后需要重新填写 |

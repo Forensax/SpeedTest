@@ -31,6 +31,7 @@ BLUE = "#2563eb"
 INK = "#182537"
 MUTED = "#6b7789"
 BORDER = "#e2e7ee"
+NOTEBOOK_TAB_WIDTH = 8
 
 
 def format_bytes(value: int) -> str:
@@ -94,7 +95,7 @@ class SpeedTestApp:
         style.configure("TLabel", background="white")
         style.configure("Muted.TLabel", foreground=MUTED)
         style.configure("TNotebook", background="white", borderwidth=0, tabmargins=(16, 0, 16, 0))
-        style.configure("TNotebook.Tab", padding=(18, 8), background="white", borderwidth=0)
+        style.configure("TNotebook.Tab", padding=(18, 8), width=NOTEBOOK_TAB_WIDTH, background="white", borderwidth=0)
         style.map("TNotebook.Tab", background=[("selected", "#edf3ff")], foreground=[("disabled", "#a6afbc"), ("selected", BLUE)])
         common = dict(font=font, padding=(14, 7), borderwidth=1, relief="flat", anchor="center")
         style.configure("App.TButton", **common, background="white", foreground=INK, bordercolor="#cfd7e2", focuscolor=BLUE)
@@ -392,7 +393,9 @@ class SpeedTestApp:
         self.proxy_mode_entry.configure(state="disabled" if busy else "readonly")
         self.urls_text.configure(state="disabled" if busy else "normal")
         if not busy:
-            self.restore_collection_button.state(["disabled" if self.collection_var.get() == "自定义" else "!disabled"])
+            collection = COLLECTIONS_BY_LABEL.get(self.collection_var.get())
+            is_custom = collection is not None and collection.id == CUSTOM_COLLECTION_ID
+            self.restore_collection_button.state(["disabled" if is_custom else "!disabled"])
         self.duration_entry.state(["!disabled" if self.timed_var.get() and not busy else "disabled"])
         proxy_enabled = self.proxy_mode_var.get() != "直连" and not busy
         for widget in (self.proxy_host_entry, self.proxy_port_entry, self.proxy_username_entry, self.proxy_password_entry):
