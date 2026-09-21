@@ -42,6 +42,23 @@ THREAD_STATE_LABELS = {
     ThreadState.STOPPING: "停止中",
     ThreadState.STOPPED: "已停止",
 }
+THREAD_STATE_ORDER = {
+    ThreadState.IDLE: 0,
+    ThreadState.CONNECTING: 1,
+    ThreadState.DOWNLOADING: 2,
+    ThreadState.RETRYING: 3,
+    ThreadState.STOPPING: 4,
+    ThreadState.STOPPED: 5,
+}
+THREAD_DETAIL_COLUMNS = ("thread", "state", "speed", "total", "url")
+THREAD_DETAIL_HEADINGS = {
+    "thread": "线程",
+    "state": "状态",
+    "speed": "速度",
+    "total": "累计流量",
+    "url": "地址",
+}
+THREAD_DETAIL_FIXED_WIDTHS = {"thread": 64, "state": 76, "speed": 104, "total": 100}
 
 
 def format_bytes(value: int) -> str:
@@ -81,6 +98,11 @@ class SpeedTestApp:
         self._last_chart_samples = None
         self._last_snapshot = self.engine.snapshot()
         self._last_thread_rows = None
+        self._current_thread_details: tuple[ThreadSnapshot, ...] = ()
+        self._thread_row_frames: list[ttk.Frame] = []
+        self._thread_address_labels: list[ttk.Label] = []
+        self._thread_sort_column: str | None = None
+        self._thread_sort_reverse = False
         self._suppress_url_tracking = False
         self._urls_modified = False
         self.thread_details_expanded = False
@@ -131,6 +153,7 @@ class SpeedTestApp:
         style.configure("TSpinbox", padding=5, fieldbackground="white", bordercolor="#cfd7e2", arrowsize=10)
         style.configure("TCheckbutton", background="white", focuscolor="white")
         style.map("TCheckbutton", background=[("active", "white")])
+        style.configure("ThreadHeader.TLabel", background="#f7f8fa", foreground=INK, padding=(6, 4))
         style.configure("Horizontal.TSeparator", background=BORDER)
 
     def _variables(self) -> None:
@@ -213,37 +236,47 @@ class SpeedTestApp:
         self.thread_details_body = ttk.Frame(self.thread_details_section)
         self.thread_details_body.grid(row=1, column=0, sticky="ew", pady=(7, 0))
         self.thread_details_body.columnconfigure(0, weight=1)
-        self.thread_details_tree = ttk.Treeview(
-            self.thread_details_body,
-            columns=("thread", "state", "speed", "total", "url"),
-            show="headings",
-            selectmode="none",
-            height=4,
-        )
-        headings = {
-            "thread": "线程",
-            "state": "状态",
-            "speed": "速度",
-            "total": "累计流量",
-            "url": "地址",
-        }
-        widths = {"thread": 64, "state": 76, "speed": 104, "total": 100, "url": 520}
-        for column in ("thread", "state", "speed", "total", "url"):
-            self.thread_details_tree.heading(column, text=headings[column])
-            self.thread_details_tree.column(
-                column,
-                width=widths[column],
-                minwidth=widths[column] if column != "url" else 240,
-                stretch=column == "url",
+        self.thread_details_body.rowconfigure(1, weight=1)
+        self.thread_details_header = ttk.Frame(self.thread_details_body)
+        self.thread_details_header.grid(row=0, column=0, sticky="ew")
+        self.thread_details_header_labels: dict[str, ttk.Label] = {}
+        self._configure_thread_detail_grid(self.thread_details_header)
+        for column in THREAD_DETAIL_COLUMNS:
+            label = ttk.Label(
+                self.thread_details_header,
+                text=THREAD_DETAIL_HEADINGS[column],
+                style="ThreadHeader.TLabel",
                 anchor="e" if column in ("speed", "total") else "w",
+                cursor="hand2",
             )
-        self.thread_details_tree.grid(row=0, column=0, sticky="ew")
-        self.thread_details_body.columnconfigure(0, weight=1)
-        thread_vertical = ttk.Scrollbar(self.thread_details_body, orient="vertical", command=self.thread_details_tree.yview)
-        thread_vertical.grid(row=0, column=1, sticky="ns")
-        thread_horizontal = ttk.Scrollbar(self.thread_details_body, orient="horizontal", command=self.thread_details_tree.xview)
-        thread_horizontal.grid(row=1, column=0, sticky="ew")
-        self.thread_details_tree.configure(yscrollcommand=thread_vertical.set, xscrollcommand=thread_horizontal.set)
+            label.grid(row=0, column=THREAD_DETAIL_COLUMNS.index(column), sticky="ew")
+            label.bind("<Button-1>", lambda _event, sort_column=column: self.sort_thread_details(sort_column))
+            self.thread_details_header_labels[column] = label
+
+        self.thread_details_canvas = tk.Canvas(
+            self.thread_details_body,
+            height=round(104 * self.scale),
+            background="white",
+            highlightthickness=1,
+            highlightbackground="#cfd7e2",
+            highlightcolor=BLUE,
+        )
+        self.thread_details_canvas.grid(row=1, column=0, sticky="ew")
+        self.thread_details_rows = ttk.Frame(self.thread_details_canvas)
+        self.thread_details_rows.columnconfigure(0, weight=1)
+        self._thread_details_window = self.thread_details_canvas.create_window(
+            (0, 0), window=self.thread_details_rows, anchor="nw"
+        )
+        self.thread_details_rows.bind("<Configure>", self._on_thread_details_rows_configure)
+        self.thread_details_canvas.bind("<Configure>", self._on_thread_details_canvas_configure)
+        self.thread_details_scrollbar = ttk.Scrollbar(
+            self.thread_details_body,
+            orient="vertical",
+            command=self.thread_details_canvas.yview,
+        )
+        self.thread_details_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.thread_details_canvas.configure(yscrollcommand=self.thread_details_scrollbar.set)
+        self._update_thread_header_labels()
         self.thread_details_body.grid_remove()
 
         ttk.Separator(page).grid(row=4, column=0, sticky="ew")
@@ -383,6 +416,62 @@ class SpeedTestApp:
         except (ConfigError, OSError):
             self._thread_details_warning = "线程明细展开状态保存失败"
 
+    @staticmethod
+    def _configure_thread_detail_grid(container: ttk.Frame) -> None:
+        for index, column in enumerate(THREAD_DETAIL_COLUMNS):
+            if column == "url":
+                container.columnconfigure(index, weight=1, minsize=1)
+            else:
+                container.columnconfigure(index, weight=0, minsize=THREAD_DETAIL_FIXED_WIDTHS[column])
+
+    def _on_thread_details_rows_configure(self, _event: tk.Event) -> None:
+        self.thread_details_canvas.configure(scrollregion=self.thread_details_canvas.bbox("all"))
+
+    def _on_thread_details_canvas_configure(self, event: tk.Event) -> None:
+        self.thread_details_canvas.itemconfigure(self._thread_details_window, width=max(1, event.width))
+        self._update_thread_address_wraplength()
+
+    def _update_thread_address_wraplength(self) -> None:
+        width = self.thread_details_canvas.winfo_width()
+        if width <= 1:
+            return
+        fixed_width = sum(THREAD_DETAIL_FIXED_WIDTHS.values())
+        address_width = max(160, width - fixed_width - 8)
+        for label in self._thread_address_labels:
+            label.configure(wraplength=address_width)
+        self.thread_details_canvas.configure(scrollregion=self.thread_details_canvas.bbox("all"))
+
+    def _update_thread_header_labels(self) -> None:
+        for column, label in self.thread_details_header_labels.items():
+            heading = THREAD_DETAIL_HEADINGS[column]
+            if column == self._thread_sort_column:
+                heading = f"{heading} {'▼' if self._thread_sort_reverse else '▲'}"
+            label.configure(text=heading)
+
+    def _thread_detail_sort_key(self, detail: ThreadSnapshot):
+        column = self._thread_sort_column
+        if column == "state":
+            return THREAD_STATE_ORDER[detail.state]
+        if column == "speed":
+            return detail.bytes_per_second
+        if column == "total":
+            return detail.total_bytes
+        if column == "url":
+            return detail.url.casefold()
+        return detail.index
+
+    def sort_thread_details(self, column: str) -> None:
+        if column not in THREAD_DETAIL_COLUMNS:
+            return
+        if column == self._thread_sort_column:
+            self._thread_sort_reverse = not self._thread_sort_reverse
+        else:
+            self._thread_sort_column = column
+            self._thread_sort_reverse = False
+        self._update_thread_header_labels()
+        self._last_thread_rows = None
+        self._update_thread_details(self._current_thread_details)
+
     def _preview_thread_details(self) -> tuple[ThreadSnapshot, ...]:
         return tuple(
             ThreadSnapshot(
@@ -396,6 +485,8 @@ class SpeedTestApp:
         )
 
     def _update_thread_details(self, details: tuple[ThreadSnapshot, ...]) -> None:
+        self._current_thread_details = tuple(details)
+        ordered_details = tuple(sorted(details, key=self._thread_detail_sort_key, reverse=self._thread_sort_reverse))
         rows = tuple(
             (
                 f"线程 {detail.index}",
@@ -404,16 +495,35 @@ class SpeedTestApp:
                 format_bytes(detail.total_bytes),
                 detail.url,
             )
-            for detail in details
+            for detail in ordered_details
         )
         if rows == self._last_thread_rows:
+            self._update_thread_address_wraplength()
             return
         self._last_thread_rows = rows
         self._thread_details_count = len(rows)
         self._apply_thread_details_visibility()
-        self.thread_details_tree.delete(*self.thread_details_tree.get_children())
-        for row in rows:
-            self.thread_details_tree.insert("", "end", values=row)
+        self._thread_row_frames = []
+        self._thread_address_labels = []
+        for child in self.thread_details_rows.winfo_children():
+            child.destroy()
+        for row_index, (detail, row) in enumerate(zip(ordered_details, rows)):
+            row_frame = ttk.Frame(self.thread_details_rows)
+            row_frame.grid(row=row_index, column=0, sticky="ew")
+            self._configure_thread_detail_grid(row_frame)
+            for column_index, value in enumerate(row):
+                label = ttk.Label(
+                    row_frame,
+                    text=value,
+                    anchor="e" if column_index in (2, 3) else "w",
+                    justify="left",
+                    padding=(6, 3),
+                )
+                label.grid(row=0, column=column_index, sticky="ew")
+                if column_index == 4:
+                    self._thread_address_labels.append(label)
+            self._thread_row_frames.append(row_frame)
+        self._update_thread_address_wraplength()
 
     def _selected_collection(self):
         try:

@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from speedtest_gui.app import NOTEBOOK_TAB_PADDING, NOTEBOOK_TAB_WIDTH, SpeedTestApp, format_bytes, format_duration
 from speedtest_gui.config import BUILTIN_COLLECTIONS, COLLECTIONS_BY_LABEL, SpeedTestConfig
+from speedtest_gui.engine import ThreadSnapshot, ThreadState
 from tests.servers import HTTPFixture
 
 
@@ -106,19 +107,45 @@ class GuiTests(unittest.TestCase):
         self.app.thread_details_toggle.invoke()
         self.root.update()
         self.assertEqual(self.app.thread_details_body.winfo_manager(), "grid")
-        rows = self.app.thread_details_tree.get_children()
-        self.assertEqual(len(rows), self.app.config.connections)
-        first = self.app.thread_details_tree.item(rows[0], "values")
+        self.assertFalse(hasattr(self.app, "thread_details_tree"))
+        self.assertTrue(self.app.thread_details_scrollbar.winfo_exists())
+        self.assertTrue(self.app.urls_text.cget("xscrollcommand"))
+        self.assertEqual(len(self.app._thread_row_frames), self.app.config.connections)
+        first = self.app._last_thread_rows[0]
         self.assertEqual(first[0], "线程 1")
         self.assertEqual(first[1], "未开始")
         self.assertEqual(first[2], "0.00 Mbps")
         self.assertEqual(first[3], "0 B")
         self.assertEqual(first[4], self.app.config.urls[0])
+        self.assertTrue(self.app._thread_address_labels[0].cget("wraplength") > 0)
         saved = SpeedTestConfig.from_dict(json.loads(self.path.read_text(encoding="utf-8")))
         self.assertTrue(saved.thread_details_expanded)
         self.reopen()
         self.assertTrue(self.app.thread_details_expanded)
         self.assertEqual(self.app.thread_details_body.winfo_manager(), "grid")
+
+    def test_thread_details_headers_sort_numeric_state_and_url_values(self):
+        details = (
+            ThreadSnapshot(1, "https://z.example/file", ThreadState.STOPPED, 9, 80_000_000 / 8),
+            ThreadSnapshot(2, "https://a.example/file", ThreadState.IDLE, 100, 9_000_000 / 8),
+            ThreadSnapshot(3, "https://m.example/file", ThreadState.DOWNLOADING, 50, 20_000_000 / 8),
+        )
+        self.app._update_thread_details(details)
+        self.assertEqual([row[0] for row in self.app._last_thread_rows], ["线程 1", "线程 2", "线程 3"])
+
+        self.app.sort_thread_details("speed")
+        self.assertEqual([row[0] for row in self.app._last_thread_rows], ["线程 2", "线程 3", "线程 1"])
+        self.assertEqual(self.app.thread_details_header_labels["speed"].cget("text"), "速度 ▲")
+        self.app.sort_thread_details("speed")
+        self.assertEqual([row[0] for row in self.app._last_thread_rows], ["线程 1", "线程 3", "线程 2"])
+        self.assertEqual(self.app.thread_details_header_labels["speed"].cget("text"), "速度 ▼")
+
+        self.app.sort_thread_details("total")
+        self.assertEqual([row[0] for row in self.app._last_thread_rows], ["线程 1", "线程 3", "线程 2"])
+        self.app.sort_thread_details("state")
+        self.assertEqual([row[0] for row in self.app._last_thread_rows], ["线程 2", "线程 3", "线程 1"])
+        self.app.sort_thread_details("url")
+        self.assertEqual([row[0] for row in self.app._last_thread_rows], ["线程 2", "线程 3", "线程 1"])
 
     def test_collection_selection_and_restore(self):
         self.app.collection_var.set("Hugging Face Models")
@@ -253,11 +280,11 @@ class GuiTests(unittest.TestCase):
             self.app.thread_details_toggle.invoke()
             self.assertEqual(self.app.thread_details_body.winfo_manager(), "grid")
             self.assertTrue(self.pump_until(lambda: self.app.engine.snapshot().total_bytes > 0))
-            self.assertTrue(self.pump_until(lambda: any("测速中" in self.app.thread_details_tree.item(row, "values") for row in self.app.thread_details_tree.get_children())))
+            self.assertTrue(self.pump_until(lambda: any(row[1] == "测速中" for row in self.app._last_thread_rows)))
             self.app.stop_button.invoke()
             self.assertTrue(self.pump_until(lambda: self.app.start_button.instate(["!disabled"])))
             self.assertGreater(self.app.engine.snapshot().total_bytes, 0)
-            self.assertTrue(all(self.app.thread_details_tree.item(row, "values")[1] == "已停止" for row in self.app.thread_details_tree.get_children()))
+            self.assertTrue(all(row[1] == "已停止" for row in self.app._last_thread_rows))
             self.assertEqual(self.app.notebook.tab(self.app.settings_page, "state"), "normal")
             self.assertEqual(self.app.state_var.get(), "已停止")
 
