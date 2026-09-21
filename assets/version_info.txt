@@ -14,12 +14,12 @@ VSVersionInfo(
       StringTable('040904B0', [
         StringStruct('CompanyName', 'Forensax'),
         StringStruct('FileDescription', 'SpeedTest 下载测速'),
-        StringStruct('FileVersion', '0.2.9'),
+        StringStruct('FileVersion', '0.2.10'),
         StringStruct('InternalName', 'SpeedTest'),
         StringStruct('LegalCopyright', 'Copyright (c) 2026 Forensax'),
         StringStruct('OriginalFilename', 'SpeedTest.exe'),
         StringStruct('ProductName', 'SpeedTest'),
-        StringStruct('ProductVersion', '0.2.9')
+        StringStruct('ProductVersion', '0.2.10')
       ])
     ]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])

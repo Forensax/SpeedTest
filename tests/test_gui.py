@@ -158,6 +158,45 @@ class GuiTests(unittest.TestCase):
         self.app.sort_thread_details("url")
         self.assertEqual([row[0] for row in self.app._last_thread_rows], ["线程 2", "线程 3", "线程 1"])
 
+    def test_thread_details_reuses_rows_during_refresh(self):
+        self.app.thread_details_toggle.invoke()
+        self.root.update()
+        before = {
+            index: (row_frame, labels)
+            for index, (row_frame, labels) in self.app._thread_rows_by_index.items()
+        }
+        details = tuple(
+            ThreadSnapshot(
+                index,
+                self.app.config.urls[(index - 1) % len(self.app.config.urls)],
+                ThreadState.DOWNLOADING,
+                index * 1_000_000,
+                index * 125_000.0,
+            )
+            for index in range(1, self.app.config.connections + 1)
+        )
+
+        self.app._update_thread_details(details)
+
+        for index, (row_frame, labels) in before.items():
+            current_frame, current_labels = self.app._thread_rows_by_index[index]
+            self.assertIs(current_frame, row_frame)
+            self.assertEqual(tuple(current_labels), tuple(labels))
+        self.assertEqual(self.app._thread_row_frames, [before[index][0] for index in range(1, self.app.config.connections + 1)])
+        self.assertEqual(self.app._last_thread_rows[0][1], "测速中")
+        self.assertEqual(self.app._last_thread_rows[0][3], "1.00 MB")
+
+        extra_detail = ThreadSnapshot(
+            self.app.config.connections + 1,
+            "https://example.com/new.bin",
+            ThreadState.IDLE,
+            0,
+            0.0,
+        )
+        self.app._update_thread_details(details + (extra_detail,))
+        self.assertIs(self.app._thread_rows_by_index[1][0], before[1][0])
+        self.assertIn(self.app.config.connections + 1, self.app._thread_rows_by_index)
+
     def test_collection_selection_and_restore(self):
         self.app.collection_var.set("Hugging Face Models")
         self.app.select_collection()

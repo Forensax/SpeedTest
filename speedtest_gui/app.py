@@ -101,6 +101,9 @@ class SpeedTestApp:
         self._current_thread_details: tuple[ThreadSnapshot, ...] = ()
         self._thread_row_frames: list[ttk.Frame] = []
         self._thread_address_labels: list[ttk.Label] = []
+        self._thread_rows_by_index: dict[int, tuple[ttk.Frame, tuple[ttk.Label, ...]]] = {}
+        self._thread_address_wraplength: int | None = None
+        self._thread_scrollregion = None
         self._thread_sort_column: str | None = None
         self._thread_sort_reverse = False
         self._thread_display_order: tuple[int, ...] | None = None
@@ -426,21 +429,30 @@ class SpeedTestApp:
                 container.columnconfigure(index, weight=0, minsize=THREAD_DETAIL_FIXED_WIDTHS[column])
 
     def _on_thread_details_rows_configure(self, _event: tk.Event) -> None:
-        self.thread_details_canvas.configure(scrollregion=self.thread_details_canvas.bbox("all"))
+        self._update_thread_details_scrollregion()
+
+    def _update_thread_details_scrollregion(self) -> None:
+        scrollregion = self.thread_details_canvas.bbox("all")
+        if scrollregion != self._thread_scrollregion:
+            self.thread_details_canvas.configure(scrollregion=scrollregion)
+            self._thread_scrollregion = scrollregion
 
     def _on_thread_details_canvas_configure(self, event: tk.Event) -> None:
         self.thread_details_canvas.itemconfigure(self._thread_details_window, width=max(1, event.width))
         self._update_thread_address_wraplength()
 
-    def _update_thread_address_wraplength(self) -> None:
+    def _update_thread_address_wraplength(self, *, force: bool = False) -> None:
         width = self.thread_details_canvas.winfo_width()
         if width <= 1:
             return
         fixed_width = sum(THREAD_DETAIL_FIXED_WIDTHS.values())
         address_width = max(160, width - fixed_width - 8)
+        if not force and address_width == self._thread_address_wraplength:
+            return
+        self._thread_address_wraplength = address_width
         for label in self._thread_address_labels:
             label.configure(wraplength=address_width)
-        self.thread_details_canvas.configure(scrollregion=self.thread_details_canvas.bbox("all"))
+        self._update_thread_details_scrollregion()
 
     def _update_thread_header_labels(self) -> None:
         for column, label in self.thread_details_header_labels.items():
@@ -526,32 +538,53 @@ class SpeedTestApp:
             for detail in ordered_details
         )
         if rows == self._last_thread_rows:
-            self._update_thread_address_wraplength()
             return
         self._last_thread_rows = rows
+        count_changed = self._thread_details_count != len(rows)
         self._thread_details_count = len(rows)
-        self._apply_thread_details_visibility()
+        if count_changed:
+            self._apply_thread_details_visibility()
+
+        active_indexes = {detail.index for detail in ordered_details}
+        structure_changed = False
+        for index in tuple(self._thread_rows_by_index):
+            if index not in active_indexes:
+                self._thread_rows_by_index[index][0].destroy()
+                del self._thread_rows_by_index[index]
+                structure_changed = True
+
         self._thread_row_frames = []
         self._thread_address_labels = []
-        for child in self.thread_details_rows.winfo_children():
-            child.destroy()
         for row_index, (detail, row) in enumerate(zip(ordered_details, rows)):
-            row_frame = ttk.Frame(self.thread_details_rows)
+            row_widgets = self._thread_rows_by_index.get(detail.index)
+            if row_widgets is None:
+                row_frame = ttk.Frame(self.thread_details_rows)
+                self._configure_thread_detail_grid(row_frame)
+                labels = []
+                for column_index, value in enumerate(row):
+                    label = ttk.Label(
+                        row_frame,
+                        text=value,
+                        anchor="e" if column_index in (2, 3) else "w",
+                        justify="left",
+                        padding=(6, 3),
+                    )
+                    label.grid(row=0, column=column_index, sticky="ew")
+                    labels.append(label)
+                row_widgets = (row_frame, tuple(labels))
+                self._thread_rows_by_index[detail.index] = row_widgets
+                structure_changed = True
+
+            row_frame, labels = row_widgets
             row_frame.grid(row=row_index, column=0, sticky="ew")
-            self._configure_thread_detail_grid(row_frame)
-            for column_index, value in enumerate(row):
-                label = ttk.Label(
-                    row_frame,
-                    text=value,
-                    anchor="e" if column_index in (2, 3) else "w",
-                    justify="left",
-                    padding=(6, 3),
-                )
-                label.grid(row=0, column=column_index, sticky="ew")
-                if column_index == 4:
-                    self._thread_address_labels.append(label)
+            for label, value in zip(labels, row):
+                if label.cget("text") != value:
+                    label.configure(text=value)
             self._thread_row_frames.append(row_frame)
-        self._update_thread_address_wraplength()
+            self._thread_address_labels.append(labels[4])
+        if structure_changed:
+            self._update_thread_address_wraplength(force=True)
+            self._update_thread_details_scrollregion()
 
     def _selected_collection(self):
         try:
