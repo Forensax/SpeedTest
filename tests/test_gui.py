@@ -76,6 +76,10 @@ class GuiTests(unittest.TestCase):
         )
         self.assertEqual(NOTEBOOK_TAB_PADDING, (18, 8))
         self.assertEqual(self.app.collection_var.get(), "Apple CDN")
+        self.assertEqual(list(self.app.collection_buttons), [item.id for item in BUILTIN_COLLECTIONS] + ["custom"])
+        self.assertEqual(self.app.collection_buttons["apple"].cget("style"), "Primary.TButton")
+        self.assertEqual(self.app.collection_buttons["github"].cget("style"), "App.TButton")
+        self.assertIs(self.app.restore_collection_button.master, self.app.urls_header)
         self.assertTrue(self.app.proxy_host_entry.instate(["disabled"]))
         self.assertTrue(self.app.duration_entry.instate(["disabled"]))
         self.app.proxy_mode_var.set("SOCKS5")
@@ -83,6 +87,18 @@ class GuiTests(unittest.TestCase):
         self.app._update_controls()
         self.assertTrue(self.app.proxy_host_entry.instate(["!disabled"]))
         self.assertTrue(self.app.duration_entry.instate(["!disabled"]))
+
+    def test_collection_buttons_select_collection(self):
+        self.app.collection_buttons["huggingface"].invoke()
+        self.assertEqual(self.app.collection_var.get(), "Hugging Face Models")
+        self.assertEqual(
+            self.app.urls_text.get("1.0", "end").strip().splitlines(),
+            list(BUILTIN_COLLECTIONS[1].urls),
+        )
+        self.assertEqual(self.app.collection_buttons["huggingface"].cget("style"), "Primary.TButton")
+        self.app.collection_buttons["custom"].invoke()
+        self.assertEqual(self.app.collection_var.get(), "Custom")
+        self.assertTrue(self.app.restore_collection_button.instate(["disabled"]))
 
     def test_collection_selection_and_restore(self):
         self.app.collection_var.set("Hugging Face Models")

@@ -206,24 +206,17 @@ class SpeedTestApp:
         page.rowconfigure(5, weight=1)
         collection = ttk.Frame(page)
         collection.grid(row=0, column=0, sticky="ew", pady=(0, 12))
-        collection.columnconfigure(1, weight=1)
-        ttk.Label(collection, text="测速集合").grid(row=0, column=0, padx=(0, 10))
-        self.collection_entry = ttk.Combobox(
-            collection,
-            values=tuple(item.label for item in COLLECTIONS),
-            textvariable=self.collection_var,
-            state="readonly",
-            width=22,
-        )
-        self.collection_entry.grid(row=0, column=1, sticky="w")
-        self.collection_entry.bind("<<ComboboxSelected>>", lambda _event: self.select_collection())
-        self.restore_collection_button = ttk.Button(
-            collection,
-            text="恢复集合默认",
-            style="App.TButton",
-            command=self.restore_collection,
-        )
-        self.restore_collection_button.grid(row=0, column=2, padx=(12, 0))
+        ttk.Label(collection, text="测速集合").grid(row=0, column=0, padx=(0, 10), sticky="w")
+        self.collection_buttons: dict[str, ttk.Button] = {}
+        for index, item in enumerate(COLLECTIONS, start=1):
+            button = ttk.Button(
+                collection,
+                text=item.label,
+                style="App.TButton",
+                command=lambda collection_id=item.id: self.select_collection(collection_id),
+            )
+            button.grid(row=0, column=index, sticky="w", padx=(0, 8) if index < len(COLLECTIONS) else 0)
+            self.collection_buttons[item.id] = button
 
         timing = ttk.Frame(page)
         timing.grid(row=1, column=0, sticky="ew", pady=(0, 15))
@@ -261,10 +254,17 @@ class SpeedTestApp:
         self.proxy_password_entry = ttk.Entry(auth, textvariable=self.proxy_password_var, show="●")
         self.proxy_password_entry.grid(row=0, column=3, sticky="ew")
 
-        urls_header = ttk.Frame(page)
-        urls_header.grid(row=4, column=0, sticky="ew", pady=(0, 8))
-        urls_header.columnconfigure(0, weight=1)
-        ttk.Label(urls_header, text="下载地址", anchor="w").grid(row=0, column=0, sticky="w")
+        self.urls_header = ttk.Frame(page)
+        self.urls_header.grid(row=4, column=0, sticky="ew", pady=(0, 8))
+        self.urls_header.columnconfigure(0, weight=1)
+        ttk.Label(self.urls_header, text="下载地址", anchor="w").grid(row=0, column=0, sticky="w")
+        self.restore_collection_button = ttk.Button(
+            self.urls_header,
+            text="恢复集合默认",
+            style="App.TButton",
+            command=self.restore_collection,
+        )
+        self.restore_collection_button.grid(row=0, column=1, sticky="e")
         urls_frame = ttk.Frame(page)
         urls_frame.grid(row=5, column=0, sticky="nsew")
         urls_frame.columnconfigure(0, weight=1)
@@ -309,9 +309,11 @@ class SpeedTestApp:
         except KeyError as exc:
             raise ConfigError("请选择有效的测速集合。") from exc
 
-    def select_collection(self) -> None:
+    def select_collection(self, collection_id: str | None = None) -> None:
         if self.engine.snapshot().busy:
             return
+        if collection_id is not None:
+            self.collection_var.set(get_collection(collection_id).label)
         collection = self._selected_collection()
         self._remember_active_collection_urls()
         if collection.id == CUSTOM_COLLECTION_ID:
@@ -464,12 +466,17 @@ class SpeedTestApp:
     def _update_controls(self) -> None:
         snapshot = self.engine.snapshot()
         busy = snapshot.busy or self._closing
-        for widget in (self.collection_entry, self.restore_collection_button, self.connections_entry, self.timed_check, self.save_button):
+        for button in self.collection_buttons.values():
+            button.state(["disabled" if busy else "!disabled"])
+        for widget in (self.restore_collection_button, self.connections_entry, self.timed_check, self.save_button):
             widget.state(["disabled" if busy else "!disabled"])
+        collection = COLLECTIONS_BY_LABEL.get(self.collection_var.get())
+        selected_id = collection.id if collection is not None else None
+        for collection_id, button in self.collection_buttons.items():
+            button.configure(style="Primary.TButton" if collection_id == selected_id else "App.TButton")
         self.proxy_mode_entry.configure(state="disabled" if busy else "readonly")
         self.urls_text.configure(state="disabled" if busy else "normal")
         if not busy:
-            collection = COLLECTIONS_BY_LABEL.get(self.collection_var.get())
             is_custom = collection is not None and collection.id == CUSTOM_COLLECTION_ID
             self.restore_collection_button.state(["disabled" if is_custom else "!disabled"])
         self.duration_entry.state(["!disabled" if self.timed_var.get() and not busy else "disabled"])
