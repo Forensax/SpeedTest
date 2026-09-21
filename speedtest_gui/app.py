@@ -71,6 +71,8 @@ class SpeedTestApp:
         self._last_busy: bool | None = None
         self._last_chart_samples = None
         self._last_snapshot = self.engine.snapshot()
+        self._suppress_url_tracking = False
+        self._urls_modified = False
         self.scale = max(1.0, root.winfo_fpixels("1i") / 96)
 
         root.title("SpeedTest")
@@ -272,6 +274,7 @@ class SpeedTestApp:
         horizontal = ttk.Scrollbar(urls_frame, orient="horizontal", command=self.urls_text.xview)
         horizontal.grid(row=1, column=0, sticky="ew")
         self.urls_text.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+        self.urls_text.bind("<<Modified>>", self._on_urls_modified)
 
         footer = ttk.Frame(page)
         footer.grid(row=6, column=0, sticky="ew", pady=(14, 0))
@@ -290,8 +293,9 @@ class SpeedTestApp:
         self.proxy_port_var.set(str(self.config.proxy.port))
         self.proxy_username_var.set(self.config.proxy.username)
         self.proxy_password_var.set(self.config.proxy.password)
-        self.urls_text.insert("1.0", "\n".join(self.config.urls))
+        self._replace_urls(self.config.urls)
         self.route_var.set(self.config.proxy.label)
+        self._update_urls_modified_state(show_message=True)
         self._update_controls()
 
     def _selected_collection(self):
@@ -308,9 +312,7 @@ class SpeedTestApp:
             self.settings_message_var.set("当前为自定义地址")
             self._update_controls()
             return
-        self.urls_text.configure(state="normal")
-        self.urls_text.delete("1.0", "end")
-        self.urls_text.insert("1.0", "\n".join(collection.urls))
+        self._replace_urls(collection.urls)
         self.settings_message_var.set(f"已载入 {collection.label} 默认地址")
         self._update_controls()
 
@@ -320,11 +322,38 @@ class SpeedTestApp:
         collection = self._selected_collection()
         if collection.id == CUSTOM_COLLECTION_ID:
             return
-        self.urls_text.configure(state="normal")
-        self.urls_text.delete("1.0", "end")
-        self.urls_text.insert("1.0", "\n".join(collection.urls))
+        self._replace_urls(collection.urls)
         self.settings_message_var.set("集合默认地址已恢复")
         self._update_controls()
+
+    def _replace_urls(self, urls: tuple[str, ...]) -> None:
+        self._suppress_url_tracking = True
+        try:
+            self.urls_text.configure(state="normal")
+            self.urls_text.delete("1.0", "end")
+            self.urls_text.insert("1.0", "\n".join(urls))
+            self.urls_text.edit_modified(False)
+        finally:
+            self._suppress_url_tracking = False
+        self._urls_modified = False
+
+    def _read_urls(self) -> tuple[str, ...]:
+        return tuple(line.strip() for line in self.urls_text.get("1.0", "end").splitlines() if line.strip())
+
+    def _update_urls_modified_state(self, *, show_message: bool = False) -> None:
+        collection = self._selected_collection()
+        self._urls_modified = collection.id == CUSTOM_COLLECTION_ID or self._read_urls() != collection.urls
+        if show_message and self._urls_modified:
+            message = "当前为自定义地址" if collection.id == CUSTOM_COLLECTION_ID else f"已编辑 {collection.label} 地址"
+            self.settings_message_var.set(message)
+
+    def _on_urls_modified(self, _event: tk.Event) -> None:
+        if not self.urls_text.edit_modified():
+            return
+        self.urls_text.edit_modified(False)
+        if self._suppress_url_tracking or self.engine.snapshot().busy:
+            return
+        self._update_urls_modified_state(show_message=True)
 
     def _read_settings(self) -> SpeedTestConfig:
         try:
@@ -337,7 +366,7 @@ class SpeedTestApp:
             raise ConfigError("定时停止的时长至少为 1 秒。")
         collection = self._selected_collection()
         config = SpeedTestConfig(
-            urls=tuple(line.strip() for line in self.urls_text.get("1.0", "end").splitlines() if line.strip()),
+            urls=self._read_urls(),
             connections=connections,
             duration_seconds=duration,
             proxy=ProxyConfig(
@@ -352,12 +381,26 @@ class SpeedTestApp:
         config.validate()
         return config
 
+    @staticmethod
+    def _matches_persisted_config(current: SpeedTestConfig, persisted: SpeedTestConfig) -> bool:
+        return (
+            current.collection_id == persisted.collection_id
+            and current.urls == persisted.urls
+            and current.connections == persisted.connections
+            and current.duration_seconds == persisted.duration_seconds
+            and current.proxy.mode == persisted.proxy.mode
+            and current.proxy.host == persisted.proxy.host
+            and current.proxy.port == persisted.proxy.port
+            and current.proxy.username == persisted.proxy.username
+        )
+
     def save_settings(self) -> bool:
         if self.engine.snapshot().busy:
             return False
         try:
             config = self._read_settings()
             save_config(config, self.config_path)
+            persisted, warning = load_config(self.config_path)
         except ConfigError as error:
             self.notebook.select(self.settings_page)
             messagebox.showerror("设置有误", str(error), parent=self.root)
@@ -365,9 +408,14 @@ class SpeedTestApp:
         except OSError:
             messagebox.showerror("保存失败", "无法写入用户配置目录。", parent=self.root)
             return False
+        if warning or not self._matches_persisted_config(config, persisted):
+            messagebox.showerror("保存失败", "保存后校验失败，请重新保存。", parent=self.root)
+            return False
         self.config = config
         self.route_var.set(config.proxy.label)
-        self.settings_message_var.set("已保存 · 密码仅在当前会话使用")
+        self._update_urls_modified_state()
+        address_status = f"已保存 {self._selected_collection().label} 自定义地址" if self._urls_modified else "已保存"
+        self.settings_message_var.set(f"{address_status} · 密码仅在当前会话使用")
         self._warning = ""
         return True
 

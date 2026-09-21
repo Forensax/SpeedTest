@@ -9,7 +9,7 @@ from tkinter import ttk
 from unittest.mock import patch
 
 from speedtest_gui.app import NOTEBOOK_TAB_PADDING, NOTEBOOK_TAB_WIDTH, SpeedTestApp, format_bytes, format_duration
-from speedtest_gui.config import BUILTIN_COLLECTIONS, SpeedTestConfig
+from speedtest_gui.config import BUILTIN_COLLECTIONS, COLLECTIONS_BY_LABEL, SpeedTestConfig
 from tests.servers import HTTPFixture
 
 
@@ -59,6 +59,14 @@ class GuiTests(unittest.TestCase):
             time.sleep(0.02)
         return bool(condition())
 
+    def reopen(self):
+        if self.app._after_id is not None:
+            self.root.after_cancel(self.app._after_id)
+        self.root.destroy()
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.app = SpeedTestApp(self.root, config_path=self.path)
+
     def test_pages_proxy_and_timer_controls(self):
         self.assertEqual([self.app.notebook.tab(tab, "text") for tab in self.app.notebook.tabs()], ["测速", "设置"])
         self.assertEqual(int(self.root.tk.call("ttk::style", "lookup", "TNotebook.Tab", "-width")), NOTEBOOK_TAB_WIDTH)
@@ -102,6 +110,50 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(saved.collection_id, "github")
         self.assertEqual(saved.urls, BUILTIN_COLLECTIONS[2].urls)
 
+    def test_edited_builtin_urls_persist_with_source_collection_and_restore(self):
+        for collection in BUILTIN_COLLECTIONS:
+            with self.subTest(collection=collection.id):
+                self.app.collection_var.set(collection.label)
+                self.app.select_collection()
+                edited_url = f"https://example.com/{collection.id}-custom.bin"
+                self.app.urls_text.delete("1.0", "end")
+                self.app.urls_text.insert("1.0", edited_url)
+                self.root.update()
+                self.assertIn(f"已编辑 {collection.label} 地址", self.app.settings_message_var.get())
+                self.assertTrue(self.app.save_settings())
+                self.assertEqual(self.app.collection_var.get(), collection.label)
+                self.assertIn(f"已保存 {collection.label} 自定义地址", self.app.settings_message_var.get())
+
+                self.reopen()
+                self.assertEqual(self.app.collection_var.get(), collection.label)
+                self.assertEqual(self.app.urls_text.get("1.0", "end").strip().splitlines(), [edited_url])
+                self.app.restore_collection()
+                self.assertEqual(
+                    self.app.urls_text.get("1.0", "end").strip().splitlines(),
+                    list(COLLECTIONS_BY_LABEL[collection.label].urls),
+                )
+
+    def test_custom_urls_persist_after_restart(self):
+        edited_url = "https://example.com/custom.bin"
+        self.app.collection_var.set("Custom")
+        self.app.select_collection()
+        self.app.urls_text.delete("1.0", "end")
+        self.app.urls_text.insert("1.0", edited_url)
+        self.assertTrue(self.app.save_settings())
+        self.reopen()
+        self.assertEqual(self.app.collection_var.get(), "Custom")
+        self.assertEqual(self.app.urls_text.get("1.0", "end").strip().splitlines(), [edited_url])
+
+    def test_save_requires_successful_readback_verification(self):
+        self.app.urls_text.delete("1.0", "end")
+        self.app.urls_text.insert("1.0", "https://example.com/verified.bin")
+        with patch("speedtest_gui.app.load_config", return_value=(SpeedTestConfig(), "")), patch(
+            "speedtest_gui.app.messagebox.showerror"
+        ) as showerror:
+            self.assertFalse(self.app.save_settings())
+        showerror.assert_called_once_with("保存失败", "保存后校验失败，请重新保存。", parent=self.root)
+        self.assertNotIn("已保存", self.app.settings_message_var.get())
+
     def test_invalid_settings_select_settings_page(self):
         self.app.connections_var.set("bad")
         with patch("speedtest_gui.app.messagebox.showerror") as showerror:
@@ -109,6 +161,19 @@ class GuiTests(unittest.TestCase):
             showerror.assert_called_once()
         self.assertEqual(self.app.notebook.select(), str(self.app.settings_page))
         self.assertFalse(self.path.exists())
+
+    def test_invalid_urls_show_validation_errors(self):
+        for url, expected in (
+            ("", "请至少填写一个下载地址。"),
+            ("file:///C:/sample.bin", "第 1 行须填写有效的 HTTP 或 HTTPS 地址。"),
+            ("https://example.com:99999/file.bin", "第 1 行须填写有效的 HTTP 或 HTTPS 地址。"),
+        ):
+            with self.subTest(url=url):
+                self.app.urls_text.delete("1.0", "end")
+                self.app.urls_text.insert("1.0", url)
+                with patch("speedtest_gui.app.messagebox.showerror") as showerror:
+                    self.assertFalse(self.app.save_settings())
+                showerror.assert_called_once_with("设置有误", expected, parent=self.root)
 
     def test_running_locks_settings_and_stop_keeps_results(self):
         with HTTPFixture() as server:
