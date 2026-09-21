@@ -133,6 +133,37 @@ class GuiTests(unittest.TestCase):
                     list(COLLECTIONS_BY_LABEL[collection.label].urls),
                 )
 
+    def test_switching_collections_keeps_edited_urls_until_restore(self):
+        edited_url = "https://example.com/apple-custom.bin"
+        self.app.urls_text.delete("1.0", "end")
+        self.app.urls_text.insert("1.0", edited_url)
+        self.assertTrue(self.app.save_settings())
+
+        self.app.collection_var.set("GitHub Releases")
+        self.app.select_collection()
+        self.assertEqual(
+            self.app.urls_text.get("1.0", "end").strip().splitlines(),
+            list(BUILTIN_COLLECTIONS[2].urls),
+        )
+
+        self.app.collection_var.set("Apple CDN")
+        self.app.select_collection()
+        self.assertEqual(self.app.urls_text.get("1.0", "end").strip().splitlines(), [edited_url])
+
+        self.app.restore_collection()
+        self.assertEqual(
+            self.app.urls_text.get("1.0", "end").strip().splitlines(),
+            list(BUILTIN_COLLECTIONS[0].urls),
+        )
+        self.app.collection_var.set("GitHub Releases")
+        self.app.select_collection()
+        self.app.collection_var.set("Apple CDN")
+        self.app.select_collection()
+        self.assertEqual(
+            self.app.urls_text.get("1.0", "end").strip().splitlines(),
+            list(BUILTIN_COLLECTIONS[0].urls),
+        )
+
     def test_custom_urls_persist_after_restart(self):
         edited_url = "https://example.com/custom.bin"
         self.app.collection_var.set("Custom")

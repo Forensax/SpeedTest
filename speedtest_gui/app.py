@@ -73,6 +73,8 @@ class SpeedTestApp:
         self._last_snapshot = self.engine.snapshot()
         self._suppress_url_tracking = False
         self._urls_modified = False
+        self._active_collection_id = self.config.collection_id
+        self._collection_urls: dict[str, tuple[str, ...]] = {self.config.collection_id: self.config.urls}
         self.scale = max(1.0, root.winfo_fpixels("1i") / 96)
 
         root.title("SpeedTest")
@@ -284,7 +286,10 @@ class SpeedTestApp:
         self.save_button.grid(row=0, column=1, sticky="e")
 
     def _fill_settings(self) -> None:
-        self.collection_var.set(get_collection(self.config.collection_id).label)
+        collection = get_collection(self.config.collection_id)
+        self._active_collection_id = collection.id
+        self._collection_urls[collection.id] = self.config.urls
+        self.collection_var.set(collection.label)
         self.connections_var.set(str(self.config.connections))
         self.timed_var.set(self.config.duration_seconds > 0)
         self.duration_var.set(str(self.config.duration_seconds or 60))
@@ -308,12 +313,21 @@ class SpeedTestApp:
         if self.engine.snapshot().busy:
             return
         collection = self._selected_collection()
+        self._remember_active_collection_urls()
         if collection.id == CUSTOM_COLLECTION_ID:
+            if collection.id not in self._collection_urls:
+                self._collection_urls[collection.id] = self._read_urls()
+            self._active_collection_id = collection.id
+            self._replace_urls(self._collection_urls[collection.id])
             self.settings_message_var.set("当前为自定义地址")
             self._update_controls()
             return
-        self._replace_urls(collection.urls)
-        self.settings_message_var.set(f"已载入 {collection.label} 默认地址")
+        urls = self._collection_urls.get(collection.id, collection.urls)
+        self._active_collection_id = collection.id
+        self._replace_urls(urls)
+        self._update_urls_modified_state()
+        source = "自定义地址" if self._urls_modified else "默认地址"
+        self.settings_message_var.set(f"已载入 {collection.label} {source}")
         self._update_controls()
 
     def restore_collection(self) -> None:
@@ -322,6 +336,8 @@ class SpeedTestApp:
         collection = self._selected_collection()
         if collection.id == CUSTOM_COLLECTION_ID:
             return
+        self._collection_urls[collection.id] = collection.urls
+        self._active_collection_id = collection.id
         self._replace_urls(collection.urls)
         self.settings_message_var.set("集合默认地址已恢复")
         self._update_controls()
@@ -340,6 +356,9 @@ class SpeedTestApp:
     def _read_urls(self) -> tuple[str, ...]:
         return tuple(line.strip() for line in self.urls_text.get("1.0", "end").splitlines() if line.strip())
 
+    def _remember_active_collection_urls(self) -> None:
+        self._collection_urls[self._active_collection_id] = self._read_urls()
+
     def _update_urls_modified_state(self, *, show_message: bool = False) -> None:
         collection = self._selected_collection()
         self._urls_modified = collection.id == CUSTOM_COLLECTION_ID or self._read_urls() != collection.urls
@@ -353,6 +372,7 @@ class SpeedTestApp:
         self.urls_text.edit_modified(False)
         if self._suppress_url_tracking or self.engine.snapshot().busy:
             return
+        self._remember_active_collection_urls()
         self._update_urls_modified_state(show_message=True)
 
     def _read_settings(self) -> SpeedTestConfig:
@@ -412,6 +432,8 @@ class SpeedTestApp:
             messagebox.showerror("保存失败", "保存后校验失败，请重新保存。", parent=self.root)
             return False
         self.config = config
+        self._collection_urls[config.collection_id] = config.urls
+        self._active_collection_id = config.collection_id
         self.route_var.set(config.proxy.label)
         self._update_urls_modified_state()
         address_status = f"已保存 {self._selected_collection().label} 自定义地址" if self._urls_modified else "已保存"
