@@ -5,9 +5,10 @@ import time
 import tkinter as tk
 import unittest
 from pathlib import Path
+from tkinter import ttk
 from unittest.mock import patch
 
-from speedtest_gui.app import NOTEBOOK_TAB_WIDTH, SpeedTestApp, format_bytes, format_duration
+from speedtest_gui.app import NOTEBOOK_TAB_PADDING, NOTEBOOK_TAB_WIDTH, SpeedTestApp, format_bytes, format_duration
 from speedtest_gui.config import BUILTIN_COLLECTIONS, SpeedTestConfig
 from tests.servers import HTTPFixture
 
@@ -61,6 +62,11 @@ class GuiTests(unittest.TestCase):
     def test_pages_proxy_and_timer_controls(self):
         self.assertEqual([self.app.notebook.tab(tab, "text") for tab in self.app.notebook.tabs()], ["测速", "设置"])
         self.assertEqual(int(self.root.tk.call("ttk::style", "lookup", "TNotebook.Tab", "-width")), NOTEBOOK_TAB_WIDTH)
+        self.assertEqual(
+            ttk.Style(self.root).map("TNotebook.Tab", "padding"),
+            [("selected", "18 8"), ("!selected", "18 8")],
+        )
+        self.assertEqual(NOTEBOOK_TAB_PADDING, (18, 8))
         self.assertEqual(self.app.collection_var.get(), "Apple CDN")
         self.assertTrue(self.app.proxy_host_entry.instate(["disabled"]))
         self.assertTrue(self.app.duration_entry.instate(["disabled"]))

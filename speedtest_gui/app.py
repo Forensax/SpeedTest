@@ -32,6 +32,7 @@ INK = "#182537"
 MUTED = "#6b7789"
 BORDER = "#e2e7ee"
 NOTEBOOK_TAB_WIDTH = 8
+NOTEBOOK_TAB_PADDING = (18, 8)
 
 
 def format_bytes(value: int) -> str:
@@ -95,8 +96,13 @@ class SpeedTestApp:
         style.configure("TLabel", background="white")
         style.configure("Muted.TLabel", foreground=MUTED)
         style.configure("TNotebook", background="white", borderwidth=0, tabmargins=(16, 0, 16, 0))
-        style.configure("TNotebook.Tab", padding=(18, 8), width=NOTEBOOK_TAB_WIDTH, background="white", borderwidth=0)
-        style.map("TNotebook.Tab", background=[("selected", "#edf3ff")], foreground=[("disabled", "#a6afbc"), ("selected", BLUE)])
+        style.configure("TNotebook.Tab", padding=NOTEBOOK_TAB_PADDING, width=NOTEBOOK_TAB_WIDTH, background="white", borderwidth=0)
+        style.map(
+            "TNotebook.Tab",
+            padding=[("selected", NOTEBOOK_TAB_PADDING), ("!selected", NOTEBOOK_TAB_PADDING)],
+            background=[("selected", "#edf3ff")],
+            foreground=[("disabled", "#a6afbc"), ("selected", BLUE)],
+        )
         common = dict(font=font, padding=(14, 7), borderwidth=1, relief="flat", anchor="center")
         style.configure("App.TButton", **common, background="white", foreground=INK, bordercolor="#cfd7e2", focuscolor=BLUE)
         style.map("App.TButton", background=[("disabled", "#f7f8fa"), ("pressed", "#e6ecf5"), ("active", "#f1f5fb")], foreground=[("disabled", "#a4adba")])
