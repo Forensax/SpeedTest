@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from speedtest_gui.config import ProxyConfig, SpeedTestConfig
-from speedtest_gui.engine import SpeedTestEngine, TestState, TransferMeter
+from speedtest_gui.engine import SpeedTestEngine, TestState, ThreadState, TransferMeter
 from tests.servers import HTTPFixture, SocksFixture
 
 
@@ -73,6 +73,30 @@ class EngineTests(unittest.TestCase):
             self.assertEqual(self.engine.snapshot().total_bytes, 0)
             self.engine.stop()
             self.assertTrue(self.engine.wait(3))
+
+    def test_thread_details_track_assigned_urls_and_individual_totals(self):
+        with HTTPFixture() as server:
+            urls = (server.url + "/stream", server.url + "/slow")
+            self.engine.start(SpeedTestConfig(urls=urls, connections=4))
+            expected_urls = [urls[index % len(urls)] for index in range(4)]
+            self.assertTrue(wait_until(lambda: len(self.engine.snapshot().thread_details) == 4))
+            self.assertTrue(
+                wait_until(
+                    lambda: all(detail.total_bytes > 0 for detail in self.engine.snapshot().thread_details)
+                )
+            )
+            snapshot = self.engine.snapshot()
+            self.assertEqual([detail.index for detail in snapshot.thread_details], [1, 2, 3, 4])
+            self.assertEqual([detail.url for detail in snapshot.thread_details], expected_urls)
+            self.assertEqual(
+                sum(detail.total_bytes for detail in snapshot.thread_details),
+                snapshot.total_bytes,
+            )
+            self.assertTrue(all(detail.bytes_per_second >= 0 for detail in snapshot.thread_details))
+            self.engine.stop()
+            self.assertTrue(self.engine.wait(3))
+            final = self.engine.snapshot()
+            self.assertTrue(all(detail.state == ThreadState.STOPPED for detail in final.thread_details))
 
     def test_timer_and_decimal_units(self):
         with HTTPFixture() as server:

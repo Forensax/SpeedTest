@@ -30,9 +30,27 @@ class TestState(StrEnum):
     FINISHED = "finished"
 
 
+class ThreadState(StrEnum):
+    IDLE = "idle"
+    CONNECTING = "connecting"
+    DOWNLOADING = "downloading"
+    RETRYING = "retrying"
+    STOPPING = "stopping"
+    STOPPED = "stopped"
+
+
 @dataclass(frozen=True)
 class SpeedSample:
     elapsed_seconds: float
+    bytes_per_second: float
+
+
+@dataclass(frozen=True)
+class ThreadSnapshot:
+    index: int
+    url: str
+    state: ThreadState
+    total_bytes: int
     bytes_per_second: float
 
 
@@ -50,6 +68,7 @@ class SpeedSnapshot:
     last_error: str
     error_count: int
     stop_reason: str
+    thread_details: tuple[ThreadSnapshot, ...] = ()
 
     @property
     def busy(self) -> bool:
@@ -89,6 +108,14 @@ class TransferMeter:
             self.samples.popleft()
 
 
+@dataclass
+class _WorkerProgress:
+    index: int
+    url: str
+    meter: TransferMeter
+    state: ThreadState = ThreadState.IDLE
+
+
 class SpeedTestEngine:
     def __init__(self, *, clock: Callable[[], float] = time.perf_counter):
         self._clock = clock
@@ -100,6 +127,7 @@ class SpeedTestEngine:
         self._meter = TransferMeter(clock())
         self._stopped_at: float | None = None
         self._active_connections = 0
+        self._worker_progress: list[_WorkerProgress] = []
         self._last_error = ""
         self._error_count = 0
         self._stop_reason = ""
@@ -107,7 +135,14 @@ class SpeedTestEngine:
     def start(self, config: SpeedTestConfig) -> None:
         config.validate()
         # Take an immutable copy, including when API callers supply a list of URLs.
-        config = SpeedTestConfig(tuple(config.urls), config.connections, config.duration_seconds, config.proxy)
+        config = SpeedTestConfig(
+            urls=tuple(config.urls),
+            connections=config.connections,
+            duration_seconds=config.duration_seconds,
+            proxy=config.proxy,
+            collection_id=config.collection_id,
+            thread_details_expanded=config.thread_details_expanded,
+        )
         with self._lock:
             if self._state in (TestState.RUNNING, TestState.STOPPING) or (
                 self._supervisor is not None and self._supervisor.is_alive()
@@ -115,7 +150,16 @@ class SpeedTestEngine:
                 raise RuntimeError("请等待当前测速停止。")
             self._config = config
             self._stop_event = threading.Event()
-            self._meter = TransferMeter(self._clock())
+            started_at = self._clock()
+            self._meter = TransferMeter(started_at)
+            self._worker_progress = [
+                _WorkerProgress(
+                    index=index + 1,
+                    url=config.urls[index % len(config.urls)],
+                    meter=TransferMeter(started_at),
+                )
+                for index in range(config.connections)
+            ]
             self._stopped_at = None
             self._active_connections = 0
             self._last_error = ""
@@ -136,6 +180,10 @@ class SpeedTestEngine:
                 return
             self._stopped_at = self._clock()
             self._meter.sample(self._stopped_at, force=True)
+            for progress in self._worker_progress:
+                progress.meter.sample(self._stopped_at, force=True)
+                if progress.state not in (ThreadState.IDLE, ThreadState.STOPPED):
+                    progress.state = ThreadState.STOPPING
             self._stop_reason = reason
             self._state = TestState.STOPPING
             self._stop_event.set()
@@ -164,18 +212,30 @@ class SpeedTestEngine:
                 last_error=self._last_error,
                 error_count=self._error_count,
                 stop_reason=self._stop_reason,
+                thread_details=tuple(
+                    ThreadSnapshot(
+                        index=progress.index,
+                        url=progress.url,
+                        state=progress.state,
+                        total_bytes=progress.meter.total_bytes,
+                        bytes_per_second=progress.meter.bytes_per_second,
+                    )
+                    for progress in self._worker_progress
+                ),
             )
 
     def _run(self) -> None:
         workers: list[threading.Thread] = []
         try:
-            for index in range(self._config.connections):
+            for index, progress in enumerate(self._worker_progress):
                 if self._stop_event.is_set():
                     break
+                with self._lock:
+                    progress.state = ThreadState.CONNECTING
                 worker = threading.Thread(
                     target=self._download,
-                    args=(self._config.urls[index % len(self._config.urls)],),
-                    name=f"SpeedTest-download-{index + 1}",
+                    args=(index,),
+                    name=f"SpeedTest-download-{progress.index}",
                     daemon=True,
                 )
                 worker.start()
@@ -184,6 +244,8 @@ class SpeedTestEngine:
                 with self._lock:
                     now = self._clock()
                     self._meter.sample(now)
+                    for progress in self._worker_progress:
+                        progress.meter.sample(now)
                     duration = self._config.duration_seconds
                     if duration and now - self._meter.started_at >= duration:
                         self.stop("timer")
@@ -198,6 +260,8 @@ class SpeedTestEngine:
                 worker.join()
             with self._lock:
                 self._active_connections = 0
+                for progress in self._worker_progress:
+                    progress.state = ThreadState.STOPPED
                 self._state = TestState.FINISHED
 
     def _record_error(self, message: str) -> None:
@@ -223,7 +287,9 @@ class SpeedTestEngine:
             return f"连接中断或读取超时 · {host}"
         return f"下载失败 · {host}"
 
-    def _download(self, url: str) -> None:
+    def _download(self, worker_index: int) -> None:
+        progress = self._worker_progress[worker_index]
+        url = progress.url
         try:
             with requests.Session() as session:
                 session.trust_env = False
@@ -234,6 +300,9 @@ class SpeedTestEngine:
                     "Cache-Control": "no-cache",
                 })
                 while not self._stop_event.is_set():
+                    with self._lock:
+                        if not self._stop_event.is_set():
+                            progress.state = ThreadState.CONNECTING
                     try:
                         with session.get(url, stream=True, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT)) as response:
                             response.raise_for_status()
@@ -241,6 +310,7 @@ class SpeedTestEngine:
                                 break
                             with self._lock:
                                 self._active_connections += 1
+                                progress.state = ThreadState.DOWNLOADING
                             received = 0
                             try:
                                 while not self._stop_event.is_set():
@@ -252,18 +322,30 @@ class SpeedTestEngine:
                                     with self._lock:
                                         if not self._stop_event.is_set():
                                             received += len(chunk)
+                                            progress.meter.total_bytes += len(chunk)
                                             self._meter.total_bytes += len(chunk)
                             finally:
                                 with self._lock:
                                     self._active_connections -= 1
                             if not received and not self._stop_event.is_set():
+                                with self._lock:
+                                    progress.state = ThreadState.RETRYING
                                 self._record_error(f"地址未返回数据 · {urlsplit(url).hostname}")
                                 self._stop_event.wait(RETRY_SECONDS)
                     except (requests.RequestException, UrllibHTTPError, OSError) as error:
+                        with self._lock:
+                            if not self._stop_event.is_set():
+                                progress.state = ThreadState.RETRYING
                         self._record_error(self._error_message(error, url))
                         self._stop_event.wait(RETRY_SECONDS)
                     except Exception:
+                        with self._lock:
+                            if not self._stop_event.is_set():
+                                progress.state = ThreadState.RETRYING
                         self._record_error(f"下载失败 · {urlsplit(url).hostname}")
                         self._stop_event.wait(RETRY_SECONDS)
         except Exception:
             self._record_error("下载连接初始化失败")
+        finally:
+            with self._lock:
+                progress.state = ThreadState.STOPPED

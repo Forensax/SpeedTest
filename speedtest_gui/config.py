@@ -149,6 +149,7 @@ class SpeedTestConfig:
     duration_seconds: int = 0
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
     collection_id: str = DEFAULT_COLLECTION_ID
+    thread_details_expanded: bool = False
 
     def validate(self) -> None:
         get_collection(self.collection_id)
@@ -156,6 +157,8 @@ class SpeedTestConfig:
             raise ConfigError("并发连接数应为 1–64。")
         if type(self.duration_seconds) is not int or not 0 <= self.duration_seconds <= 86400:
             raise ConfigError("测速时长应为 1–86400 秒；0 表示持续测速。")
+        if type(self.thread_details_expanded) is not bool:
+            raise ConfigError("线程明细展开状态无效。")
         if not isinstance(self.urls, (tuple, list)) or not self.urls:
             raise ConfigError("请至少填写一个下载地址。")
         for index, url in enumerate(self.urls, 1):
@@ -181,6 +184,7 @@ class SpeedTestConfig:
             "urls": list(self.urls),
             "connections": self.connections,
             "duration_seconds": self.duration_seconds,
+            "thread_details_expanded": self.thread_details_expanded,
             "proxy": {
                 "mode": self.proxy.mode,
                 "host": self.proxy.host,
@@ -213,6 +217,7 @@ class SpeedTestConfig:
             urls=urls,
             connections=data.get("connections", 8),
             duration_seconds=data.get("duration_seconds", 0),
+            thread_details_expanded=data.get("thread_details_expanded", False),
             proxy=ProxyConfig(
                 mode=proxy.get("mode", "direct"),
                 host=proxy.get("host", "127.0.0.1"),

@@ -8,6 +8,7 @@ import json
 import math
 import sys
 import tkinter as tk
+from dataclasses import replace
 from pathlib import Path
 from tkinter import messagebox, ttk
 
@@ -23,7 +24,7 @@ from .config import (
     load_config,
     save_config,
 )
-from .engine import SpeedSnapshot, SpeedTestEngine, TestState
+from .engine import SpeedSnapshot, SpeedTestEngine, TestState, ThreadSnapshot, ThreadState
 
 
 PROXY_MODES = {"直连": "direct", "HTTP": "http", "HTTPS": "https", "SOCKS5": "socks5"}
@@ -33,6 +34,14 @@ MUTED = "#6b7789"
 BORDER = "#e2e7ee"
 NOTEBOOK_TAB_WIDTH = 8
 NOTEBOOK_TAB_PADDING = (18, 8)
+THREAD_STATE_LABELS = {
+    ThreadState.IDLE: "未开始",
+    ThreadState.CONNECTING: "连接中",
+    ThreadState.DOWNLOADING: "测速中",
+    ThreadState.RETRYING: "重试中",
+    ThreadState.STOPPING: "停止中",
+    ThreadState.STOPPED: "已停止",
+}
 
 
 def format_bytes(value: int) -> str:
@@ -71,8 +80,12 @@ class SpeedTestApp:
         self._last_busy: bool | None = None
         self._last_chart_samples = None
         self._last_snapshot = self.engine.snapshot()
+        self._last_thread_rows = None
         self._suppress_url_tracking = False
         self._urls_modified = False
+        self.thread_details_expanded = False
+        self._thread_details_count = 0
+        self._thread_details_warning = ""
         self._active_collection_id = self.config.collection_id
         self._collection_urls: dict[str, tuple[str, ...]] = {self.config.collection_id: self.config.urls}
         self.scale = max(1.0, root.winfo_fpixels("1i") / 96)
@@ -162,7 +175,7 @@ class SpeedTestApp:
     def _build_test_page(self) -> None:
         page = self.test_page
         page.columnconfigure(0, weight=1)
-        page.rowconfigure(4, weight=1)
+        page.rowconfigure(5, weight=1)
         top = ttk.Frame(page)
         top.grid(row=0, column=0, sticky="ew")
         top.columnconfigure(1, weight=1)
@@ -186,13 +199,60 @@ class SpeedTestApp:
             ttk.Label(group, text=label, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
             ttk.Label(group, textvariable=variable, font=("Segoe UI", 12, "bold")).grid(row=1, column=0, sticky="w", pady=(4, 0))
 
-        ttk.Separator(page).grid(row=3, column=0, sticky="ew")
+        self.thread_details_section = ttk.Frame(page)
+        self.thread_details_section.grid(row=3, column=0, sticky="ew", pady=(0, 8))
+        self.thread_details_section.columnconfigure(0, weight=1)
+        self.thread_details_toggle = ttk.Button(
+            self.thread_details_section,
+            text="线程明细（0） ▶",
+            style="App.TButton",
+            command=self.toggle_thread_details,
+        )
+        self.thread_details_toggle.grid(row=0, column=0, sticky="w")
+
+        self.thread_details_body = ttk.Frame(self.thread_details_section)
+        self.thread_details_body.grid(row=1, column=0, sticky="ew", pady=(7, 0))
+        self.thread_details_body.columnconfigure(0, weight=1)
+        self.thread_details_tree = ttk.Treeview(
+            self.thread_details_body,
+            columns=("thread", "state", "speed", "total", "url"),
+            show="headings",
+            selectmode="none",
+            height=4,
+        )
+        headings = {
+            "thread": "线程",
+            "state": "状态",
+            "speed": "速度",
+            "total": "累计流量",
+            "url": "地址",
+        }
+        widths = {"thread": 64, "state": 76, "speed": 104, "total": 100, "url": 520}
+        for column in ("thread", "state", "speed", "total", "url"):
+            self.thread_details_tree.heading(column, text=headings[column])
+            self.thread_details_tree.column(
+                column,
+                width=widths[column],
+                minwidth=widths[column] if column != "url" else 240,
+                stretch=column == "url",
+                anchor="e" if column in ("speed", "total") else "w",
+            )
+        self.thread_details_tree.grid(row=0, column=0, sticky="ew")
+        self.thread_details_body.columnconfigure(0, weight=1)
+        thread_vertical = ttk.Scrollbar(self.thread_details_body, orient="vertical", command=self.thread_details_tree.yview)
+        thread_vertical.grid(row=0, column=1, sticky="ns")
+        thread_horizontal = ttk.Scrollbar(self.thread_details_body, orient="horizontal", command=self.thread_details_tree.xview)
+        thread_horizontal.grid(row=1, column=0, sticky="ew")
+        self.thread_details_tree.configure(yscrollcommand=thread_vertical.set, xscrollcommand=thread_horizontal.set)
+        self.thread_details_body.grid_remove()
+
+        ttk.Separator(page).grid(row=4, column=0, sticky="ew")
         self.chart = tk.Canvas(page, height=round(154 * self.scale), background="white", highlightthickness=0)
-        self.chart.grid(row=4, column=0, sticky="nsew", pady=(12, 6))
+        self.chart.grid(row=5, column=0, sticky="nsew", pady=(12, 6))
         self.chart.bind("<Configure>", lambda _event: self._draw_chart(self._last_snapshot))
-        ttk.Label(page, textvariable=self.detail_var, style="Muted.TLabel", anchor="w").grid(row=5, column=0, sticky="ew", pady=(0, 12))
+        ttk.Label(page, textvariable=self.detail_var, style="Muted.TLabel", anchor="w").grid(row=6, column=0, sticky="ew", pady=(0, 12))
         actions = ttk.Frame(page)
-        actions.grid(row=6, column=0, sticky="ew")
+        actions.grid(row=7, column=0, sticky="ew")
         actions.columnconfigure(2, weight=1)
         self.start_button = ttk.Button(actions, text="开始测速", style="Primary.TButton", width=10, command=self.start)
         self.start_button.grid(row=0, column=0, padx=(0, 10))
@@ -289,6 +349,8 @@ class SpeedTestApp:
         collection = get_collection(self.config.collection_id)
         self._active_collection_id = collection.id
         self._collection_urls[collection.id] = self.config.urls
+        self.thread_details_expanded = self.config.thread_details_expanded
+        self._apply_thread_details_visibility()
         self.collection_var.set(collection.label)
         self.connections_var.set(str(self.config.connections))
         self.timed_var.set(self.config.duration_seconds > 0)
@@ -302,6 +364,56 @@ class SpeedTestApp:
         self.route_var.set(self.config.proxy.label)
         self._update_urls_modified_state(show_message=True)
         self._update_controls()
+
+    def _apply_thread_details_visibility(self) -> None:
+        arrow = "▼" if self.thread_details_expanded else "▶"
+        self.thread_details_toggle.configure(text=f"线程明细（{self._thread_details_count}） {arrow}")
+        if self.thread_details_expanded:
+            self.thread_details_body.grid()
+        else:
+            self.thread_details_body.grid_remove()
+
+    def toggle_thread_details(self) -> None:
+        self.thread_details_expanded = not self.thread_details_expanded
+        self._apply_thread_details_visibility()
+        self.config = replace(self.config, thread_details_expanded=self.thread_details_expanded)
+        try:
+            save_config(self.config, self.config_path)
+            self._thread_details_warning = ""
+        except (ConfigError, OSError):
+            self._thread_details_warning = "线程明细展开状态保存失败"
+
+    def _preview_thread_details(self) -> tuple[ThreadSnapshot, ...]:
+        return tuple(
+            ThreadSnapshot(
+                index=index + 1,
+                url=self.config.urls[index % len(self.config.urls)],
+                state=ThreadState.IDLE,
+                total_bytes=0,
+                bytes_per_second=0.0,
+            )
+            for index in range(self.config.connections)
+        )
+
+    def _update_thread_details(self, details: tuple[ThreadSnapshot, ...]) -> None:
+        rows = tuple(
+            (
+                f"线程 {detail.index}",
+                THREAD_STATE_LABELS[detail.state],
+                f"{detail.bytes_per_second * 8 / 1_000_000:,.2f} Mbps",
+                format_bytes(detail.total_bytes),
+                detail.url,
+            )
+            for detail in details
+        )
+        if rows == self._last_thread_rows:
+            return
+        self._last_thread_rows = rows
+        self._thread_details_count = len(rows)
+        self._apply_thread_details_visibility()
+        self.thread_details_tree.delete(*self.thread_details_tree.get_children())
+        for row in rows:
+            self.thread_details_tree.insert("", "end", values=row)
 
     def _selected_collection(self):
         try:
@@ -399,6 +511,7 @@ class SpeedTestApp:
                 password=self.proxy_password_var.get(),
             ),
             collection_id=collection.id,
+            thread_details_expanded=self.thread_details_expanded,
         )
         config.validate()
         return config
@@ -414,6 +527,7 @@ class SpeedTestApp:
             and current.proxy.host == persisted.proxy.host
             and current.proxy.port == persisted.proxy.port
             and current.proxy.username == persisted.proxy.username
+            and current.thread_details_expanded == persisted.thread_details_expanded
         )
 
     def save_settings(self) -> bool:
@@ -517,7 +631,13 @@ class SpeedTestApp:
             status = "就绪"
         self.state_var.set(status)
         self.state_label.configure(foreground=BLUE if snapshot.state == TestState.RUNNING else MUTED)
-        self.detail_var.set(snapshot.last_error if snapshot.error_count else self._warning)
+        if snapshot.error_count:
+            self.detail_var.set(snapshot.last_error)
+        elif self._thread_details_warning:
+            self.detail_var.set(self._thread_details_warning)
+        else:
+            self.detail_var.set(self._warning)
+        self._update_thread_details(snapshot.thread_details or self._preview_thread_details())
         if self.config.duration_seconds:
             remaining = max(0, math.ceil(self.config.duration_seconds - snapshot.elapsed_seconds))
             self.duration_label_var.set(f"剩余 {format_duration(remaining)}" if snapshot.busy else f"定时 {self.config.duration_seconds} 秒")

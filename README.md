@@ -19,6 +19,7 @@ Get-FileHash .\SpeedTest.exe -Algorithm SHA256
 ## 功能
 
 - 实时速度、平均速度、峰值、累计流量、运行时间和最近 60 秒曲线。
+- 可展开查看每个测速线程的状态、当前速度、累计流量和实际下载地址。
 - 默认 8 路并发、手动停止，可调整连接数、下载地址和定时停止。
 - 内置 Apple CDN、Hugging Face Models、GitHub Releases 三种测速集合，可直接切换或恢复集合默认地址。
 - 支持 HTTP、HTTPS、SOCKS5 代理及账号认证，SOCKS5 通过代理解析 DNS。

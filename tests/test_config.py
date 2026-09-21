@@ -23,6 +23,7 @@ class ConfigTests(unittest.TestCase):
     def test_builtin_collections_are_valid_and_default_to_apple(self):
         self.assertEqual(DEFAULT_COLLECTION_ID, "apple")
         self.assertEqual(SpeedTestConfig().collection_id, DEFAULT_COLLECTION_ID)
+        self.assertFalse(SpeedTestConfig().thread_details_expanded)
         self.assertEqual([collection.id for collection in COLLECTIONS], ["apple", "huggingface", "github", "custom"])
         self.assertEqual(len(BUILTIN_COLLECTIONS[2].urls), 8)
         for collection in BUILTIN_COLLECTIONS:
@@ -42,6 +43,17 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(warning, "")
             self.assertEqual(loaded.collection_id, "huggingface")
             self.assertEqual(loaded.urls, BUILTIN_COLLECTIONS[1].urls)
+
+    def test_thread_details_expanded_is_persisted_with_v2_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            save_config(SpeedTestConfig(thread_details_expanded=True), path)
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertTrue(saved["thread_details_expanded"])
+            loaded, warning = load_config(path)
+            self.assertEqual(warning, "")
+            self.assertTrue(loaded.thread_details_expanded)
+            self.assertFalse(SpeedTestConfig.from_dict({"version": 1, "urls": list(DEFAULT_URLS)}).thread_details_expanded)
 
     def test_v1_urls_are_identified_or_kept_as_custom(self):
         apple = {"version": 1, "urls": list(DEFAULT_URLS)}
@@ -108,6 +120,7 @@ class ConfigTests(unittest.TestCase):
             SpeedTestConfig(connections=65),
             SpeedTestConfig(connections=True),
             SpeedTestConfig(duration_seconds=-1),
+            SpeedTestConfig(thread_details_expanded="yes"),
             SpeedTestConfig(proxy=ProxyConfig("http", "http://localhost", 10808)),
             SpeedTestConfig(proxy=ProxyConfig("http", "localhost", 0)),
         ):
